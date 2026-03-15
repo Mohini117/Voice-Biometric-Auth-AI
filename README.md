@@ -11,6 +11,7 @@ This repository includes:
 
 ## Table of Contents
 
+- [Demo Video](#demo-video)
 - [Overview](#overview)
 - [Core Capabilities](#core-capabilities)
 - [How Authentication Works](#how-authentication-works)
@@ -25,6 +26,12 @@ This repository includes:
 - [Current Limitations](#current-limitations)
 - [Troubleshooting](#troubleshooting)
 - [Future Improvements](#future-improvements)
+
+## Demo Video
+
+GitHub does not play repository-hosted `.mp4` files inline in `README.md`, so open the full demo from the link below.
+
+[Watch the full demo video](./voiceauthdemo.mp4)
 
 ## Overview
 
