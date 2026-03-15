@@ -813,7 +813,6 @@ export default function Dashboard() {
               </CardHeader>
               <CardContent>
                 <OTPInput
-                  userId={user!.id}
                   email={profile.email}
                   phone={profile.phone}
                   onVerified={() => {

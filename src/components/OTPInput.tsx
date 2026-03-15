@@ -6,14 +6,15 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
 interface OTPInputProps {
-  userId: string;
   email: string;
   phone?: string;
   onVerified: () => void;
   onBack: () => void;
 }
 
-export function OTPInput({ userId, email, onVerified, onBack }: OTPInputProps) {
+export function OTPInput({ email, onVerified, onBack }: OTPInputProps) {
+  const OTP_MIN_LENGTH = 6;
+  const OTP_MAX_LENGTH = 8;
   const [code, setCode] = useState('');
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -25,27 +26,23 @@ export function OTPInput({ userId, email, onVerified, onBack }: OTPInputProps) {
     setSending(true);
 
     try {
-      console.log('Sending OTP:', { userId, email });
-      
-      const { data, error } = await supabase.functions.invoke('send-otp', {
-        body: { userId, method: 'email', destination: email }
+      console.log('Sending Supabase Auth OTP:', { email });
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: false,
+        },
       });
 
-      console.log('Send OTP response:', { data, error });
-
       if (error) {
-        console.error('Function invoke error:', error);
         throw new Error(error.message || 'Failed to send OTP');
-      }
-
-      if (data && !data.success) {
-        throw new Error(data.error || 'Failed to send OTP');
       }
 
       setSent(true);
       toast({
         title: 'Verification code sent!',
-        description: 'Check your email for the 6-digit code.',
+        description: 'Check your email for the 6 or 8-digit code.',
       });
     } catch (error: any) {
       console.error('Failed to send OTP:', error);
@@ -60,26 +57,29 @@ export function OTPInput({ userId, email, onVerified, onBack }: OTPInputProps) {
   };
 
   const verifyOTP = async () => {
-    if (code.length !== 6) return;
+    if (code.length < OTP_MIN_LENGTH) return;
+    if (code.length !== 6 && code.length !== 8) {
+      toast({
+        title: 'Invalid code length',
+        description: 'Enter the 6 or 8-digit code from the email.',
+        variant: 'destructive',
+      });
+      return;
+    }
     
     setVerifying(true);
 
     try {
-      console.log('Verifying OTP:', { userId, code });
-      
-      const { data, error } = await supabase.functions.invoke('verify-otp', {
-        body: { userId, code }
+      console.log('Verifying Supabase Auth OTP:', { email });
+
+      const { error } = await supabase.auth.verifyOtp({
+        email,
+        token: code,
+        type: 'email',
       });
 
-      console.log('Verify OTP response:', { data, error });
-
       if (error) {
-        console.error('Function invoke error:', error);
         throw new Error(error.message || 'Verification failed');
-      }
-
-      if (!data?.success) {
-        throw new Error(data?.error || 'Invalid code');
       }
 
       toast({
@@ -171,7 +171,7 @@ export function OTPInput({ userId, email, onVerified, onBack }: OTPInputProps) {
         </div>
         <h3 className="text-lg font-semibold">Enter verification code</h3>
         <p className="text-sm text-muted-foreground">
-          Enter the 6-digit code sent to your email.
+          Enter the 6 or 8-digit code sent to your email.
         </p>
       </div>
 
@@ -180,18 +180,18 @@ export function OTPInput({ userId, email, onVerified, onBack }: OTPInputProps) {
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
-          maxLength={6}
+          maxLength={OTP_MAX_LENGTH}
           placeholder="000000"
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-          className="otp-input h-16 text-center text-3xl font-mono tracking-[0.5em] bg-muted/50 border-border/50 focus:border-primary"
+          className="otp-input h-16 text-center text-3xl font-mono tracking-[0.25em] bg-muted/50 border-border/50 focus:border-primary"
           autoFocus
         />
 
         <Button
           className="w-full neon-button bg-gradient-to-r from-primary to-accent text-primary-foreground h-12"
           onClick={verifyOTP}
-          disabled={code.length !== 6 || verifying}
+          disabled={code.length < OTP_MIN_LENGTH || verifying}
         >
           {verifying ? (
             <Loader2 className="w-5 h-5 mr-2 animate-spin" />

@@ -1,6 +1,4 @@
-import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-interface SendOTPRequest {
+interface ResendOTPRequest {
   userId?: string;
 }
 
@@ -16,27 +14,13 @@ function generateOTP(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-function parsePort(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function parseTls(value: string | undefined, fallback: boolean): boolean {
-  if (!value) return fallback;
-  const normalized = value.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "off"].includes(normalized)) return false;
-  return fallback;
-}
-
-serve(async (req) => {
-  // Handle CORS preflight
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
-    const body: SendOTPRequest = await req.json().catch(() => ({}));
+    const body: ResendOTPRequest = await req.json().catch(() => ({}));
     const authHeader = req.headers.get("Authorization");
 
     if (!authHeader) {
@@ -46,7 +30,6 @@ serve(async (req) => {
       );
     }
 
-    // Initialize Supabase client
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -93,13 +76,9 @@ serve(async (req) => {
       throw new Error("No email found for user");
     }
 
-    console.log(`Generating OTP for user ${userId}, email: ${destination}`);
-
-    // Generate OTP
     const otp = generateOTP();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    // Store OTP in database
     const { error: insertError } = await supabase
       .from("otp_codes")
       .insert({
@@ -114,69 +93,60 @@ serve(async (req) => {
       throw new Error("Failed to generate verification code");
     }
 
-    // Get SMTP credentials
-    const smtpUser = Deno.env.get("SMTP_USER");
-    const smtpPass = Deno.env.get("SMTP_PASS");
-    const smtpHost = Deno.env.get("SMTP_HOST") ?? "smtp.gmail.com";
-    const smtpPort = parsePort(Deno.env.get("SMTP_PORT"), 465);
-    const smtpTls = parseTls(Deno.env.get("SMTP_TLS"), true);
-    const smtpFrom = Deno.env.get("SMTP_FROM") ?? smtpUser;
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    const resendFrom = Deno.env.get("RESEND_FROM");
 
-    // If SMTP not configured, return OTP for dev mode
-    if (!smtpUser || !smtpPass) {
-      console.log(`
-      [DEV MODE] Verification code generated for ${destination}: ${otp}
-      To send emails: Add SMTP_USER and SMTP_PASS to Supabase secrets
-      `);
+    if (!resendApiKey || !resendFrom) {
+      console.log(
+        `[DEV MODE] Verification code generated for ${destination}: ${otp}. ` +
+        "Add RESEND_API_KEY and RESEND_FROM to Supabase secrets to send emails.",
+      );
 
       return new Response(
         JSON.stringify({
           success: true,
           message: "Verification code generated (dev mode - check logs)",
-          code: otp, // Dev mode only
+          code: otp,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // SMTP is configured - send real email
-    const client = new SMTPClient({
-      connection: {
-        hostname: smtpHost,
-        port: smtpPort,
-        tls: smtpTls,
-        auth: {
-          username: smtpUser,
-          password: smtpPass,
-        },
+    const subject = "Your VoiceAuth verification code";
+    const html = `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <p>Your VoiceAuth verification code is:</p>
+        <p style="font-size: 24px; font-weight: bold; letter-spacing: 2px;">${otp}</p>
+        <p>This code will expire in 5 minutes. If you didn't request this, you can ignore this email.</p>
+      </div>
+    `;
+
+    const resendResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${resendApiKey}`,
       },
+      body: JSON.stringify({
+        from: resendFrom,
+        to: destination,
+        subject,
+        html,
+      }),
     });
 
-    try {
-      await client.send({
-        from: smtpFrom ?? smtpUser,
-        to: destination,
-        subject: "Your VoiceAuth verification code",
-        content:
-          `Your VoiceAuth verification code is: ${otp}\n\n` +
-          "This code will expire in 5 minutes. If you didn't request this, you can ignore this email.",
-      });
-
-      console.log(`OTP email sent successfully to ${destination}`);
-    } catch (emailError) {
-      console.error("Failed to send email:", emailError);
-      throw new Error("Failed to send verification email. Please check SMTP configuration.");
+    if (!resendResponse.ok) {
+      const errorText = await resendResponse.text();
+      console.error("Resend API error:", errorText);
+      throw new Error("Failed to send verification email");
     }
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        message: "Verification code sent to your email",
-      }),
+      JSON.stringify({ success: true, message: "Verification code sent to your email" }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error: unknown) {
-    console.error("Error in send-otp:", error);
+    console.error("Error in resend-email:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
     return new Response(
       JSON.stringify({ success: false, error: message }),
